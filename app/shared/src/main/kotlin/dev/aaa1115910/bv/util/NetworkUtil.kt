@@ -1,60 +1,14 @@
 package dev.aaa1115910.bv.util
 
-import io.github.oshai.kotlinlogging.KotlinLogging
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpRequestRetry
-import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsText
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withContext
-
+/**
+ * 本 fork 已移除「中国大陆地区不可用」限制。
+ *
+ * 上游实现会请求 cloudflare 的 cdn-cgi/trace 判断出口 IP 所在地区，
+ * 当 loc == "CN" 时返回 true，MainActivity 据此渲染 RegionBlockScreen 阻止使用。
+ *
+ * 这里直接返回 false：不做任何地区/网络探测，应用在所有地区都按正常流程启动。
+ * 相关调用点（mobile/tv 的 MainActivity）保持原样，RegionBlockScreen 因此不会再被显示。
+ */
 object NetworkUtil {
-    private lateinit var client: HttpClient
-    private val locCheckUrls = listOf(
-        "https://www.cloudflare.com/cdn-cgi/trace",
-        "https://1.1.1.1/cdn-cgi/trace"
-    )
-    private val logger = KotlinLogging.logger { }
-
-    init {
-        createClient()
-    }
-
-    private fun createClient() {
-        client = HttpClient(OkHttp) {
-            install(HttpRequestRetry) {
-                retryOnException(maxRetries = 3)
-            }
-        }
-    }
-
-    suspend fun isMainlandChina() = withContext(Dispatchers.IO) {
-        val deferreds = locCheckUrls.map { locCheckUrl ->
-            async {
-                runCatching {
-                    val result = client.get(locCheckUrl).bodyAsText()
-                    logger.info { "Network result:\n$result" }
-
-                    val networkCheckResult = result
-                        .lines()
-                        .filter { it.isNotBlank() }
-                        .associate { with(it.split("=")) { this[0] to this[1] } }
-
-                    require(networkCheckResult["loc"] != "CN") { "BV doesn't support use in mainland China" }
-                    false
-                }.getOrDefault(true)
-            }
-        }
-
-        select {
-            deferreds.forEach { deferred ->
-                deferred.onAwait { it }
-            }
-        }.also {
-            deferreds.forEach { it.cancel() }
-        }
-    }
+    suspend fun isMainlandChina() = false
 }
