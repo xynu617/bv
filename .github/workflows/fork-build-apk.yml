@@ -1,8 +1,11 @@
 name: Fork Build APK
 
-# 本 fork 专用：自动构建 debug APK（已移除中国大陆地区使用限制）。
-# 上游的 alpha/release workflow 带 `if: github.repository == 'aaa1115910/bv'`
-# 守卫，在 fork 里不会出包；这里补一条不依赖任何仓库 Secret 的构建流水线。
+# 本 fork 专用：自动构建 APK（已移除中国大陆地区使用限制）。
+# - debug   ：applicationId 带 .debug 后缀，便于与官方版共存 / 调试
+# - release ：R8 优化 + 每次构建现场自签名，体积更小、在老机型（如 Android 6 电视）上更流畅
+#
+# 注意：release 签名密钥由 keytool 现场生成、不落库；因此新包覆盖安装前需先卸载旧包
+# （签名不同，直接 install -r 会报签名冲突）。
 
 on:
   workflow_dispatch:
@@ -18,8 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-debug-apk:
-    name: Build debug APK
+  build-apk:
+    name: Build debug + release APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -40,14 +43,40 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Generate signing key
+        run: |
+          mkdir -p signing
+          keytool -genkeypair -v \
+            -keystore signing/bv-release.jks \
+            -alias bvfork \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass bvfork123 -keypass bvfork123 \
+            -dname "CN=BV Fork, OU=TV, O=xynu617, L=Shanghai, ST=Shanghai, C=CN"
+          cat > signing.properties <<'EOF'
+          keystore.path=signing/bv-release.jks
+          keystore.pwd=bvfork123
+          keystore.alias=bvfork
+          keystore.alias_pwd=bvfork123
+          EOF
+
       - name: Build debug APK
         run: ./gradlew assembleDefaultDebug --stacktrace
 
-      - name: Upload APK artifact
+      - name: Build release APK (signed, R8)
+        run: ./gradlew assembleDefaultRelease --stacktrace
+
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: bv-debug-apk
           path: app/build/outputs/apk/default/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bv-release-apk
+          path: app/build/outputs/apk/default/release/*.apk
           if-no-files-found: error
 
       - name: Publish APK to rolling release
@@ -55,12 +84,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: fork-apk
-          name: Fork debug APK (region limit removed)
+          name: Fork APK (region limit removed)
           body: |
-            由 GitHub Actions 自动构建的 debug APK，已移除「中国大陆地区不可用」限制。
+            由 GitHub Actions 自动构建的 APK，已移除「中国大陆地区不可用」限制。
 
-            - 安装包为 debug 签名，可与官方版共存（applicationId 带 `.debug` 后缀）
-            - 每次 push 到 develop 都会重新构建并更新本 Release 的安装包
+            - `debug`：applicationId 带 `.debug` 后缀，可与官方版共存
+            - `release`：R8 优化 + 自签名，体积更小、在老电视（Android 6 / MiTV3S）上更流畅
+
+            > release 签名每次构建现场生成；覆盖安装前需先卸载旧版（签名不同会冲突）。
           prerelease: true
-          files: app/build/outputs/apk/default/debug/*.apk
+          files: |
+            app/build/outputs/apk/default/debug/*.apk
+            app/build/outputs/apk/default/release/*.apk
           generate_release_notes: false
